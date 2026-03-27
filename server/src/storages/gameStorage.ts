@@ -19,26 +19,130 @@ export class GameStorage {
       status: "waiting",
       playerAnswers: new Map(),
     };
-    this.storage.set(code, game);
+    this.storage.set(id, game);
     return game;
   }
 
   joinGame(player: Player, code: string): Game | null {
-    const game = this.storage.get(code);
+    const game = this.findGameByCode(code);
     if (!game) return null;
 
     game?.players.push(player);
     return game;
   }
 
-  findGameByCode(code: string) {
-    return this.storage.get(code);
-  }
-
-  findGameById(index: string): Game | null {
+  findGameByCode(code: string): Game | null {
     for (let [key, value] of this.storage) {
-      if (value.id === index) return value;
+      if (value.code === code) return value;
     }
     return null;
+  }
+
+  findGameById(index: string) {
+    return this.storage.get(index);
+  }
+
+  startQuestion(game: Game, finishFn: (game: Game) => void) {
+    const currentQuestion = game.questions[game.currentQuestion];
+    const response = {
+      ...currentQuestion,
+      correctIndex: game.currentQuestion,
+      questionNumber: 0,
+      totalQuestions: game.questions.length,
+    };
+
+    game.questionStartTime = Math.floor(Date.now() / 1000);
+    game.questionTimer = setTimeout(
+      () => finishFn(game),
+      currentQuestion.timeLimitSec * 1000,
+    );
+
+    return response;
+  }
+
+  updateQuestion(game: Game, player: string, answerIndex: number) {
+    game.playerAnswers.set(player, {
+      answerIndex,
+      timestamp: Math.floor(Date.now() / 1000),
+    });
+  }
+
+  finishQuestion(game: Game) {
+    const currentQuestion = game.questions[game.currentQuestion];
+
+    const playerResults: {
+      name: string;
+      answered: boolean;
+      correct: boolean;
+      pointsEarned: number;
+      totalScore: number;
+    }[] = [];
+
+    game.players.forEach((player, ind) => {
+      const answer = game.playerAnswers.get(player.index);
+      if (!answer) {
+        if (player.ws?.readyState !== WebSocket.OPEN)
+          game.players.splice(ind, 1);
+
+        playerResults.push({
+          name: player.name,
+          answered: false,
+          correct: false,
+          pointsEarned: 0,
+          totalScore: player.score,
+        });
+      } else {
+        const isCorrect = answer.answerIndex === currentQuestion.correctIndex;
+        let earnedPoints = 0;
+
+        if (isCorrect)
+          earnedPoints = Math.floor(
+            1000 *
+              (1 -
+                (answer.timestamp - game.questionStartTime!) /
+                  currentQuestion.timeLimitSec),
+          );
+
+        player.score += earnedPoints;
+
+        playerResults.push({
+          name: player.name,
+          answered: true,
+          correct: isCorrect,
+          pointsEarned: earnedPoints,
+          totalScore: player.score,
+        });
+      }
+    });
+
+    const result = {
+      questionIndex: game.currentQuestion,
+      correctIndex: currentQuestion.correctIndex,
+      playerResults,
+    };
+
+    return result;
+  }
+
+  finishGame(game: Game) {
+    const result = {
+      scoreboard: new Array<{
+        name: string;
+        score: number;
+        rank: number;
+      }>(),
+    };
+
+    game.players
+      .sort((a, b) => b.score - a.score)
+      .forEach((player, ind) =>
+        result.scoreboard.push({
+          name: player.name,
+          score: player.score,
+          rank: ind + 1,
+        }),
+      );
+
+    return result;
   }
 }

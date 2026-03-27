@@ -1,6 +1,7 @@
 import { WebSocket } from "ws";
 import { UserStorage } from "./storages/userStorage";
 import {
+  AnswerData,
   CreateGameData,
   Game,
   JoinGameData,
@@ -10,7 +11,6 @@ import {
   WSMessage,
 } from "./types";
 import { GameStorage } from "./storages/gameStorage";
-import { error } from "console";
 
 export class MessageHander {
   userStorage = new UserStorage();
@@ -110,6 +110,39 @@ export class MessageHander {
         return {};
       },
     ],
+    [
+      "answer",
+      async (data: AnswerData, ws: WebSocket) => {
+        const response = {
+          type: "answer_accepted",
+          id: 0,
+          data: {},
+        };
+
+        const user = this.userStorage.findbyWebsocket(ws);
+
+        if (!user || user.ws?.readyState !== WebSocket.OPEN) {
+          throw Error("no such user");
+        }
+
+        const game = this.gameStorage.findGameById(data.gameId);
+
+        if (!game) {
+          throw Error("no such game");
+        }
+
+        this.gameStorage.updateQuestion(game, user.index, data.answerIndex);
+
+        if (game.playerAnswers.size === game.players.length) {
+          clearTimeout(game.questionTimer);
+
+          this.sendResult(game);
+        }
+
+        response.data = { questionIndex: data.questionIndex };
+        return response;
+      },
+    ],
   ]);
 
   handleMessage = async (message: WSMessage, ws: WebSocket) => {
@@ -182,12 +215,9 @@ export class MessageHander {
       data: {},
     };
 
-    response.data = {
-      ...game.questions[0],
-      correctIndex: -1,
-      questionNumber: 0,
-      totalQuestions: game.questions.length,
-    };
+    response.data = this.gameStorage.startQuestion(game, this.sendResult);
+
+    game.status = "in_progress";
 
     game.players.forEach((player) => {
       if (!player || player.ws?.readyState !== WebSocket.OPEN)
@@ -196,5 +226,50 @@ export class MessageHander {
     });
 
     host.ws!.send(JSON.stringify(response));
+  };
+
+  sendResult = (game: Game) => {
+    const host = this.userStorage.findbyIndex(game.hostId);
+
+    if (!host || host.ws?.readyState !== WebSocket.OPEN)
+      throw Error("no such host");
+
+    const resultResponse = {
+      type: "question_result",
+      id: 0,
+      data: this.gameStorage.finishQuestion(game),
+    };
+
+    game.currentQuestion++;
+
+    if (game.currentQuestion < game.questions.length) {
+      game.questionTimer = setTimeout(() => {
+        this.startGame(game, host);
+      }, 5000);
+    } else {
+      game.questionTimer = setTimeout(() => {
+        const finishResponse = {
+          type: "game_finished",
+          id: 0,
+          data: this.gameStorage.finishGame(game),
+        };
+
+        game.players.forEach((player) => {
+          if (!player || player.ws?.readyState !== WebSocket.OPEN)
+            throw Error("no such player");
+          player.ws.send(JSON.stringify(finishResponse));
+        });
+
+        host.ws!.send(JSON.stringify(finishResponse));
+      }, 5000);
+    }
+
+    game.players.forEach((player) => {
+      if (!player || player.ws?.readyState !== WebSocket.OPEN)
+        throw Error("no such player");
+      player.ws.send(JSON.stringify(resultResponse));
+    });
+
+    host.ws!.send(JSON.stringify(resultResponse));
   };
 }
