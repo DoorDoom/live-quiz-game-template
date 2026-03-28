@@ -48,7 +48,7 @@ export class MessageHander {
         const user = this.userStorage.findbyWebsocket(ws);
 
         if (!user) {
-          throw Error("no such user");
+          throw new Error("no such user");
         }
 
         const { id, code } = this.gameStorage.addGame(
@@ -72,14 +72,14 @@ export class MessageHander {
         const user = this.userStorage.findbyWebsocket(ws);
 
         if (!user || user.ws?.readyState !== WebSocket.OPEN) {
-          throw Error("no such user");
+          throw new Error("no such user");
         }
 
         const newPlayer = this.userStorage.generatePlayer(user);
         const game = this.gameStorage.joinGame(newPlayer, data.code);
 
         if (!game) {
-          throw Error("no such game");
+          throw new Error("no such game");
         }
 
         this.updatePlayerList(game, newPlayer);
@@ -94,13 +94,13 @@ export class MessageHander {
         const user = this.userStorage.findbyWebsocket(ws);
 
         if (!user || user.ws?.readyState !== WebSocket.OPEN) {
-          throw Error("no such user");
+          throw new Error("no such user");
         }
 
         const game = this.gameStorage.findGameById(data.gameId);
 
         if (!game) {
-          throw Error("no such game");
+          throw new Error("no such game");
         }
 
         if (user.index !== game.hostId) throw Error("no host");
@@ -122,13 +122,13 @@ export class MessageHander {
         const user = this.userStorage.findbyWebsocket(ws);
 
         if (!user || user.ws?.readyState !== WebSocket.OPEN) {
-          throw Error("no such user");
+          throw new Error("no such user");
         }
 
         const game = this.gameStorage.findGameById(data.gameId);
 
         if (!game) {
-          throw Error("no such game");
+          throw new Error("no such game");
         }
 
         this.gameStorage.updateQuestion(game, user.index, data.answerIndex);
@@ -183,7 +183,7 @@ export class MessageHander {
     const host = this.userStorage.findbyIndex(game.hostId);
 
     if (!host || host.ws?.readyState !== WebSocket.OPEN)
-      throw Error("no such host");
+      throw new Error("no such host");
 
     playerMessage.data = {
       playerName: player.name,
@@ -198,14 +198,14 @@ export class MessageHander {
       });
     });
 
-    game.players.forEach((player) => {
-      if (!player || player.ws?.readyState !== WebSocket.OPEN)
-        throw Error("no such player");
-      player.ws.send(JSON.stringify(playerMessage));
-      player.ws.send(JSON.stringify(updatePlayerListMessage));
-    });
-
-    host.ws.send(JSON.stringify(updatePlayerListMessage));
+    this.gameStorage.sendToActiveUsers(
+      game,
+      host,
+      updatePlayerListMessage,
+      () => {
+        player.ws!.send(JSON.stringify(playerMessage));
+      },
+    );
   };
 
   startGame = async (game: Game, host: User) => {
@@ -219,20 +219,14 @@ export class MessageHander {
 
     game.status = "in_progress";
 
-    game.players.forEach((player) => {
-      if (!player || player.ws?.readyState !== WebSocket.OPEN)
-        throw Error("no such player");
-      player.ws.send(JSON.stringify(response));
-    });
-
-    host.ws!.send(JSON.stringify(response));
+    this.gameStorage.sendToActiveUsers(game, host, response);
   };
 
   sendResult = (game: Game) => {
     const host = this.userStorage.findbyIndex(game.hostId);
 
     if (!host || host.ws?.readyState !== WebSocket.OPEN)
-      throw Error("no such host");
+      throw new Error("no such host");
 
     const resultResponse = {
       type: "question_result",
@@ -254,22 +248,12 @@ export class MessageHander {
           data: this.gameStorage.finishGame(game),
         };
 
-        game.players.forEach((player) => {
-          if (!player || player.ws?.readyState !== WebSocket.OPEN)
-            throw Error("no such player");
-          player.ws.send(JSON.stringify(finishResponse));
-        });
+        game.status = "finished";
 
-        host.ws!.send(JSON.stringify(finishResponse));
+        this.gameStorage.sendToActiveUsers(game, host, finishResponse);
       }, 5000);
     }
 
-    game.players.forEach((player) => {
-      if (!player || player.ws?.readyState !== WebSocket.OPEN)
-        throw Error("no such player");
-      player.ws.send(JSON.stringify(resultResponse));
-    });
-
-    host.ws!.send(JSON.stringify(resultResponse));
+    this.gameStorage.sendToActiveUsers(game, host, resultResponse);
   };
 }

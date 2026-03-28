@@ -121,6 +121,8 @@ export class GameStorage {
       playerResults,
     };
 
+    game.playerAnswers.clear();
+
     return result;
   }
 
@@ -144,5 +146,18 @@ export class GameStorage {
       );
 
     return result;
+  }
+
+  sendToActiveUsers(game: Game, host: User, message: Object, fn?: () => void) {
+    game.players.forEach((player) => {
+      if (!player || player.ws?.readyState !== WebSocket.OPEN)
+        throw new Error("no such player");
+      if (fn) fn();
+      player.ws.send(JSON.stringify(message));
+    });
+
+    if (!host || host.ws?.readyState !== WebSocket.OPEN)
+      throw new Error("no such host");
+    host.ws.send(JSON.stringify(message));
   }
 }
