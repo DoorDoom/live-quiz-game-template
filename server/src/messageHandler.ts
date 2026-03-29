@@ -177,7 +177,7 @@ export class MessageHander {
 
     if (!host || host.ws?.readyState !== WebSocket.OPEN) {
       const errorResponse = { type: "error", id: 0, data: {} };
-      errorResponse.data = { error: true, errorText: "Host absent" };
+      errorResponse.data = { message: "Host absent" };
       this.gameStorage.sendToActiveUsers(game, errorResponse);
       return errorResponse;
     }
