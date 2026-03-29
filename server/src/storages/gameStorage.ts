@@ -23,6 +23,10 @@ export class GameStorage {
     return game;
   }
 
+  deleteGame(game: Game) {
+    this.storage.delete(game.id);
+  }
+
   joinGame(player: Player, code: string): Game | null {
     const game = this.findGameByCode(code);
     if (!game) return null;
@@ -148,16 +152,20 @@ export class GameStorage {
     return result;
   }
 
-  sendToActiveUsers(game: Game, host: User, message: Object, fn?: () => void) {
-    game.players.forEach((player) => {
-      if (!player || player.ws?.readyState !== WebSocket.OPEN)
-        throw new Error("no such player");
-      if (fn) fn();
-      player.ws.send(JSON.stringify(message));
-    });
-
+  sendToHost(host: User, message: Object) {
     if (!host || host.ws?.readyState !== WebSocket.OPEN)
       throw new Error("no such host");
     host.ws.send(JSON.stringify(message));
+  }
+
+  sendToActiveUsers(game: Game, message: Object, fn?: () => void) {
+    game.players.forEach((player, ind) => {
+      if (!player || player.ws?.readyState !== WebSocket.OPEN)
+        game.players.splice(ind, 1);
+      else {
+        if (fn) fn();
+        player.ws.send(JSON.stringify(message));
+      }
+    });
   }
 }

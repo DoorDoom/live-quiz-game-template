@@ -68,7 +68,6 @@ export class MessageHander {
           id: 0,
           data: {},
         };
-
         const user = this.userStorage.findbyWebsocket(ws);
 
         if (!user || user.ws?.readyState !== WebSocket.OPEN) {
@@ -167,13 +166,7 @@ export class MessageHander {
     }
   };
 
-  updatePlayerList = async (game: Game, player: Player) => {
-    const playerMessage = {
-      type: "player_joined",
-      id: 0,
-      data: {},
-    };
-
+  updatePlayerList = async (game: Game, player?: Player) => {
     const updatePlayerListMessage = {
       type: "update_players",
       id: 0,
@@ -182,13 +175,12 @@ export class MessageHander {
 
     const host = this.userStorage.findbyIndex(game.hostId);
 
-    if (!host || host.ws?.readyState !== WebSocket.OPEN)
-      throw new Error("no such host");
-
-    playerMessage.data = {
-      playerName: player.name,
-      playerCount: player.score,
-    };
+    if (!host || host.ws?.readyState !== WebSocket.OPEN) {
+      const errorResponse = { type: "error", id: 0, data: {} };
+      errorResponse.data = { error: true, errorText: "Host absent" };
+      this.gameStorage.sendToActiveUsers(game, errorResponse);
+      return errorResponse;
+    }
 
     game.players.forEach((player) => {
       updatePlayerListMessage.data.push({
@@ -198,14 +190,29 @@ export class MessageHander {
       });
     });
 
-    this.gameStorage.sendToActiveUsers(
-      game,
-      host,
-      updatePlayerListMessage,
-      () => {
+    if (!game.questionTimer)
+      game.questionTimer = setInterval(() => this.updatePlayerList(game), 5000);
+
+    if (player) {
+      const playerMessage = {
+        type: "player_joined",
+        id: 0,
+        data: {},
+      };
+      playerMessage.data = {
+        playerName: player.name,
+        playerCount: player.score,
+      };
+
+      this.gameStorage.sendToActiveUsers(game, updatePlayerListMessage, () => {
         player.ws!.send(JSON.stringify(playerMessage));
-      },
-    );
+      });
+
+      this.gameStorage.sendToHost(host, updatePlayerListMessage);
+    } else {
+      this.gameStorage.sendToActiveUsers(game, updatePlayerListMessage);
+      this.gameStorage.sendToHost(host, updatePlayerListMessage);
+    }
   };
 
   startGame = async (game: Game, host: User) => {
@@ -215,11 +222,14 @@ export class MessageHander {
       data: {},
     };
 
+    clearInterval(game.questionTimer);
+
     response.data = this.gameStorage.startQuestion(game, this.sendResult);
 
     game.status = "in_progress";
 
-    this.gameStorage.sendToActiveUsers(game, host, response);
+    this.gameStorage.sendToActiveUsers(game, response);
+    this.gameStorage.sendToHost(host, response);
   };
 
   sendResult = (game: Game) => {
@@ -242,18 +252,22 @@ export class MessageHander {
       }, 5000);
     } else {
       game.questionTimer = setTimeout(() => {
+        game.status = "finished";
+
         const finishResponse = {
           type: "game_finished",
           id: 0,
           data: this.gameStorage.finishGame(game),
         };
 
-        game.status = "finished";
+        this.gameStorage.sendToActiveUsers(game, finishResponse);
+        this.gameStorage.sendToHost(host, finishResponse);
 
-        this.gameStorage.sendToActiveUsers(game, host, finishResponse);
+        this.gameStorage.deleteGame(game);
       }, 5000);
     }
 
-    this.gameStorage.sendToActiveUsers(game, host, resultResponse);
+    this.gameStorage.sendToActiveUsers(game, resultResponse);
+    this.gameStorage.sendToHost(host, resultResponse);
   };
 }
